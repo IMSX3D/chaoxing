@@ -2,6 +2,7 @@
 import argparse
 import configparser
 import enum
+import re
 import sys
 import threading
 import time
@@ -503,8 +504,34 @@ def process_course(chaoxing: Chaoxing, course: dict[str, Any], config: dict):
     tqdm.format_sizeof = _old_format_sizeof
 
 
+_COURSE_ID_SPLIT = re.compile(r"[,，、;；\s]+")
+
+
+def normalize_course_ids(raw_items):
+    """把课程 ID 输入拆开并归一化。
+
+    兼容：半角/中文逗号、顿号、分号、空格、换行、中英文引号。
+    以前的实现只按半角逗号切分并做严格字符串比较，用户输入中文逗号时
+    会一个都匹配不上，然后被静默退化成"学习全部课程"。
+    """
+    ids = []
+    for item in raw_items or []:
+        for piece in _COURSE_ID_SPLIT.split(str(item)):
+            piece = piece.strip().strip("\"'“”‘’")
+            if piece:
+                ids.append(piece)
+    return ids
+
+
 def filter_courses(all_course, course_list):
-    """过滤要学习的课程"""
+    """过滤要学习的课程（严格模式）。
+
+    规则：
+    - 输入完全为空 -> 学习全部课程（这是唯一会"学全部"的情况）；
+    - 输入了课程 ID 但一个都没匹配上 -> 抛 InputFormatError 直接退出，
+      绝不静默退化成"学习全部课程"（曾经因此把 30 门课的测验全答了）；
+    - 支持中文逗号、顿号、分号、空格、引号分隔。
+    """
     if not course_list:
         # 手动输入要学习的课程ID列表
         print("*" * 10 + "课程列表" + "*" * 10)
@@ -512,25 +539,41 @@ def filter_courses(all_course, course_list):
             print(f"ID: {course['courseId']} 班级ID: {course['clazzId']} 课程名: {course['title']}")
         print("*" * 28)
         print("提示: 同一 courseId 下若存在多个班级, 将分别完成。")
+        print("      直接回车（不输入任何内容）= 学习全部课程。")
         try:
-            course_list = input(
+            course_list = [input(
                 "请输入想要学习的课程列表,以逗号分隔,例: 2151141,189191,198198\n"
-            ).split(",")
+            )]
         except Exception as e:
             raise InputFormatError("输入格式错误") from e
+
+    ids = normalize_course_ids(course_list)
+
+    # 只有"什么都没输入"才表示学习全部课程
+    if not ids:
+        logger.info("未指定课程 ID，按输入为空处理：学习全部课程")
+        return list(all_course)
 
     # 筛选需要学习的课程
     course_task = []
     seen_keys = set()
     for course in all_course:
         key = (course["courseId"], course["clazzId"])
-        if course["courseId"] in course_list and key not in seen_keys:
+        if str(course["courseId"]) in ids and key not in seen_keys:
             course_task.append(course)
             seen_keys.add(key)
-    
-    # 如果没有指定课程，则学习所有课程
+
+    matched_ids = {str(course["courseId"]) for course in course_task}
+    unknown_ids = [i for i in ids if i not in matched_ids]
+    if unknown_ids:
+        logger.warning(f"以下课程 ID 在课程列表里找不到，已忽略: {', '.join(unknown_ids)}")
+
     if not course_task:
-        course_task = all_course
+        raise InputFormatError(
+            f"课程列表 {ids} 一个都没匹配上，已中止（不会退化成学习全部课程）。"
+            "请核对课程 ID —— 可双击 查看进度.cmd 查看所有课程 ID；"
+            "若确实想学习全部课程，请在配置里把 course_list 留空并直接回车。"
+        )
 
     return course_task
 
@@ -545,6 +588,30 @@ def format_time(num, suffix='', divisor=''):
         return f"{hrs:02d}:{mins:02d}:{sec:02d}"
 
     return f"{mins:02d}:{sec:02d}"
+
+
+def report_unfinished(chaoxing: Chaoxing, course_task: list[dict[str, Any]]) -> list[tuple[str, str, Any]]:
+    """回读每门课的章节列表，返回"仍然没完成"的章节。
+
+    只读：只调 `get_course_point()`（章节列表接口），不会改动任何学习状态。
+    用途：刷课跑完后核对真实结果 —— 队列跑空 != 超星认为全部完成。
+    """
+    unfinished = []
+    for course in course_task:
+        try:
+            point_list = chaoxing.get_course_point(
+                course["courseId"], course["clazzId"], course["cpi"]
+            )
+        except Exception as e:
+            logger.error(f"回读章节状态失败: {course['title']} - {type(e).__name__}: {e}")
+            continue
+        for point in point_list.get("points", []):
+            if not point.get("has_finished", True):
+                unfinished.append(
+                    (course["title"], point.get("title"), point.get("jobCount"))
+                )
+        time.sleep(0.3)
+    return unfinished
 
 
 def main():
@@ -603,8 +670,28 @@ def main():
 
         tqdm.format_sizeof = _old_format_sizeof
 
-        logger.info("所有课程学习任务已完成")
-        notification.send("chaoxing : 所有课程学习任务已完成")
+        # 以前这里无条件打"所有课程学习任务已完成"，而 failed_tasks 从不输出，
+        # 于是"队列跑空"被当成"全部完成"。现在先报失败章节，再回读核对。
+        if p.failed_tasks:
+            logger.warning(f"有 {len(p.failed_tasks)} 个章节重试多次后仍然失败:")
+            for task in p.failed_tasks:
+                logger.warning(f"  - {task.course['title']} / {task.point['title']}")
+
+        logger.info("正在回读章节状态，核对实际完成情况...")
+        unfinished = report_unfinished(chaoxing, course_task)
+
+        if not unfinished and not p.failed_tasks:
+            logger.info("所有课程学习任务已完成（已回读核对）")
+            notification.send("chaoxing : 所有课程学习任务已完成")
+        else:
+            logger.warning(
+                f"学习已结束，但仍有 {len(unfinished)} 个章节未完成（不再报『全部完成』）:"
+            )
+            for course_title, point_title, job_count in unfinished:
+                logger.warning(f"  - {course_title} / {point_title}（任务点 {job_count}）")
+            notification.send(
+                f"chaoxing : 学习结束，但仍有 {len(unfinished)} 个章节未完成，详见日志"
+            )
 
         # 刷课完成后，如果开启了增加章节学习次数，则执行
         if add_learning_count:
@@ -615,6 +702,13 @@ def main():
             logger.info("所有课程章节学习次数增加完成")
             notification.send("chaoxing : 所有课程章节学习次数增加完成")
         
+    except InputFormatError as e:
+        logger.error(f"错误: {e}")
+        try:
+            notification.send(f"chaoxing : 配置错误 {e}")
+        except Exception:
+            pass
+        sys.exit(2)
     except SystemExit as e:
         if e.code != 0:
             logger.error(f"错误: 程序异常退出, 返回码: {e.code}")

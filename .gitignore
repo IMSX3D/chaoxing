@@ -157,3 +157,9 @@ cache.json
 start*.bat
 .workbuddy/
 myConfig/
+
+# 本机生成：进度报告与存档（含课程名等个人信息，不入库）
+进度报告.md
+进度存档/
+*.tmp
+__pycache__/

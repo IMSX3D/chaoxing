@@ -285,8 +285,23 @@ def _process_attachment_cards(cards: List[Dict[str, Any]]) -> List[Dict[str, Any
             if work_job:
                 job_list.append(work_job)
         else:
-            logger.warning(f"Unknown card type: {card_type}")
-            logger.warning(card)
+            # 超星的"讨论题"等任务点没有 type 字段（card_type 为空字符串）。
+            # 以前这里只打一条 "Unknown card type" 就把整张卡片丢掉，
+            # 导致这类章节解析出 0 个任务点 -> 被 study_emptypage 当成"空章节"
+            # 标记完成，日志因此假报"全部完成"。现在明确告警并带上任务点标题。
+            title = str(
+                property_data.get("title")
+                or property_data.get("name")
+                or card.get("title")
+                or ""
+            ).strip()
+            if card.get("job") or not card_type:
+                logger.warning(
+                    f"暂不支持的任务点类型（type={card_type or '空'}，疑似讨论题），已跳过: {title}"
+                )
+            else:
+                logger.warning(f"Unknown card type: {card_type}")
+                logger.trace(card)
 
     return job_list
 
