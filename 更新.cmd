@@ -26,7 +26,7 @@ if errorlevel 2 goto done
 echo.
 echo ================ update dependencies ================
 set "UV_CACHE_DIR=%~dp0.uv-cache"
-uv pip install --python ".venv\Scripts\python.exe" -r requirements.txt --find-links "E:\DEEPSEEK\wheels" --default-index https://pypi.tuna.tsinghua.edu.cn/simple
+uv pip install --python ".venv\Scripts\python.exe" -r requirements.txt --find-links "%~dp0vendor" --default-index https://pypi.tuna.tsinghua.edu.cn/simple
 if errorlevel 1 echo [WARN] dependency update failed, you can rerun the command above later
 
 :done
