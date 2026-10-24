@@ -14,6 +14,9 @@
         <img src="https://img.shields.io/github/v/release/Samueli924/chaoxing?display_name=tag&sort=semver" alt="version" />
     </a>
 </p>
+> **本仓库是 [IMSX3D/chaoxing](https://github.com/IMSX3D/chaoxing) 的 fork**，在上游 `45d2106` 基础上带本地补丁：修复选课静默回退与「假完成」、新增 `progress.py` / 日志清理 / 文档。差异清单见 `本地使用说明.md` 第 9 节。
+> 签到（手势 / 二维码 / 位置 / 人脸等）是**独立项目** [IMSX3D/chaoxing-sign](https://github.com/IMSX3D/chaoxing-sign)，协议依据见 `签到协议参数表.md`。
+
 :muscle: 本项目的最终目的是通过开源消灭所谓的付费刷课平台，希望有能力的朋友都可以为这个项目提交代码，支持本项目的良性发展
 
 :star: 觉得有帮助的朋友可以给个Star
