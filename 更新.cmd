@@ -2,15 +2,15 @@
 setlocal
 cd /d "%~dp0"
 
-echo ================ git pull ================
-git pull --ff-only
+echo ================ git pull (from fork: github/main) ================
+git pull --ff-only github main
 if errorlevel 1 (
     echo.
     echo [FAILED] pull failed. Common causes:
-    echo   1. cannot reach github -- check hosts for "127.0.0.1 github.com"
-    echo      (SteamTools leaves it behind when killed; reopen it or delete that line)
+    echo   1. cannot reach ssh.github.com:443 -- check hosts / proxy, or run: ssh -T -p 443 git@ssh.github.com
+    echo      (our remotes use SSH over 443, so plain github.com hijack does not matter)
     echo   2. local edits to upstream files -- run git stash or check git status
-    echo   3. upstream rewrote history -- git fetch --all then git reset --hard origin/main
+    echo   3. fork rewrote history -- git fetch github then git reset --hard github/main
     pause
     exit /b 1
 )
